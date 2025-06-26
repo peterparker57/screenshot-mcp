@@ -7,6 +7,7 @@ A Model Context Protocol (MCP) server that enables AI assistants running in WSL 
 - 📸 **Full Desktop Capture** - Capture all monitors (default behavior)
 - 🖥️ **Monitor Selection** - Capture specific monitors (primary, 1, 2, etc.)
 - 🪟 **Window Capture** - Capture specific windows by title match with DPI awareness
+- 🚀 **Process Capture** - Capture windows by process name (e.g., notepad.exe)
 - 🔄 **Automatic Path Conversion** - Converts WSL paths to Windows paths
 - 📁 **Organized Storage** - Screenshots saved to `workspace/screenshots/`
 - 🎯 **DPI Aware** - Proper scaling for high-DPI displays
@@ -68,10 +69,17 @@ Take a screenshot of monitor 1
 Take a screenshot of the primary monitor
 ```
 
-### Capture Specific Window
+### Capture Specific Window by Title
 ```
 Take a screenshot of the "Chrome" window
 Take a screenshot of window titled "Visual Studio Code"
+```
+
+### Capture Specific Window by Process Name
+```
+Take a screenshot of notepad.exe
+Take a screenshot of the chrome process
+Take a screenshot of process "Code"
 ```
 
 ### Custom Filename
@@ -92,10 +100,13 @@ The MCP server provides a single tool:
   - `"primary"` - Capture primary monitor only
   - `1`, `2`, etc. - Capture specific monitor by index
 - `windowTitle` (optional): Capture a specific window by its title (partial match supported)
+- `processName` (optional): Capture a specific window by process name (e.g., "notepad.exe" or "notepad")
 
 **Returns:**
 - Success message with the file path
 - Error message if capture fails
+
+**Note:** If both `windowTitle` and `processName` are provided, `windowTitle` takes precedence.
 
 ## Technical Details
 
@@ -110,6 +121,7 @@ The MCP server provides a single tool:
 - **Window Padding**: Adds 10px padding to capture window shadows and borders
 - **Render Wait**: Waits 200ms after focusing window to ensure complete rendering
 - **Bounds Checking**: Prevents negative coordinates when windows are near screen edges
+- **Process Matching**: Intelligent process name matching (strips .exe extension automatically)
 
 ### How It Works
 1. MCP server receives screenshot request from Claude
@@ -122,7 +134,8 @@ The MCP server provides a single tool:
 ### Error Handling
 - Filters PowerShell CLIXML output (verbose logging, not errors)
 - Validates monitor indices
-- Provides clear error messages for missing windows
+- Provides clear error messages for missing windows or processes
+- Lists available windows when capture fails
 - Automatically creates screenshots directory if needed
 
 ## Troubleshooting
@@ -140,6 +153,7 @@ Get-ExecutionPolicy
 - Ensure the window is open and not minimized
 - The title match is case-insensitive and supports partial matches
 - Try using a more specific window title
+- When searching by process, the tool will list all available windows to help you identify the correct one
 
 ### Window capture is clipped
 The latest version includes automatic padding and DPI awareness. If you still experience clipping:
@@ -151,6 +165,12 @@ The latest version includes automatic padding and DPI awareness. If you still ex
 The server automatically converts WSL paths like `/mnt/c/...` to Windows paths like `C:\...`. Ensure your workspace is under a mounted Windows drive.
 
 ## Recent Updates
+
+### v1.1.0
+- Added process name capture support
+- Can now capture windows by process name (e.g., "notepad.exe")
+- Intelligent .exe extension handling
+- Enhanced error messages showing available windows
 
 ### v1.0.1
 - Fixed window capture clipping issues
