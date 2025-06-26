@@ -13,7 +13,7 @@ const execAsync = promisify(exec);
 const server = new Server(
   {
     name: 'screenshot-server',
-    version: '1.1.0',
+    version: '1.2.0',
   },
   {
     capabilities: {
@@ -50,6 +50,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             processName: {
               type: 'string',
               description: 'Capture a specific window by process name (e.g., "notepad.exe" or just "notepad")'
+            },
+            folder: {
+              type: 'string',
+              description: 'Custom folder path to save the screenshot (supports both WSL and Windows paths). Defaults to workspace/screenshots/'
             }
           }
         }
@@ -64,19 +68,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const monitor = request.params.arguments?.monitor || 'all';
     const windowTitle = request.params.arguments?.windowTitle;
     const processName = request.params.arguments?.processName;
+    const customFolder = request.params.arguments?.folder;
     
-    // Create screenshots folder in current workspace
-    const screenshotsDir = path.resolve(process.cwd(), 'screenshots');
-    await fs.mkdir(screenshotsDir, { recursive: true });
+    // Debug logging
+    console.error('Screenshot parameters:', {
+      filename,
+      monitor,
+      windowTitle,
+      processName,
+      folder: customFolder
+    });
     
-    const outputPath = path.join(screenshotsDir, filename);
+    // Determine the folder to use
+    let screenshotsDir;
+    let windowsPath;
     
-    // Convert WSL path to Windows path for PowerShell
-    let windowsPath = outputPath;
-    if (outputPath.startsWith('/mnt/')) {
-      // Convert /mnt/c/... to C:\...
-      windowsPath = outputPath.replace(/^\/mnt\/([a-z])\//, '$1:\\').replace(/\//g, '\\');
+    if (customFolder) {
+      // Handle custom folder - could be WSL path or Windows path
+      if (customFolder.match(/^[A-Za-z]:\\/)) {
+        // It's already a Windows path (e.g., "C:\Users\...")
+        windowsPath = path.join(customFolder, filename).replace(/\//g, '\\');
+        // Convert Windows path to WSL path for fs operations
+        const driveLetter = customFolder[0].toLowerCase();
+        screenshotsDir = customFolder.replace(/^[A-Za-z]:/, `/mnt/${driveLetter}`).replace(/\\/g, '/');
+      } else if (customFolder.startsWith('/mnt/')) {
+        // It's a WSL path
+        screenshotsDir = customFolder;
+        const windowsFolder = customFolder.replace(/^\/mnt\/([a-z])\//, '$1:\\').replace(/\//g, '\\');
+        windowsPath = windowsFolder + '\\' + filename;
+      } else {
+        // It's a relative path or Linux-style absolute path
+        screenshotsDir = path.resolve(customFolder);
+        windowsPath = path.join(screenshotsDir.replace(/^\/mnt\/([a-z])\//, '$1:\\').replace(/\//g, '\\'), filename);
+      }
+    } else {
+      // Default to workspace screenshots folder
+      screenshotsDir = path.resolve(process.cwd(), 'screenshots');
+      const outputPath = path.join(screenshotsDir, filename);
+      windowsPath = outputPath.startsWith('/mnt/') 
+        ? outputPath.replace(/^\/mnt\/([a-z])\//, '$1:\\').replace(/\//g, '\\')
+        : outputPath;
     }
+    
+    // Create the directory if it doesn't exist
+    await fs.mkdir(screenshotsDir, { recursive: true });
     
     try {
       let psScript;
@@ -119,8 +154,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
 "@
           
-          # Enable DPI awareness
-          [Win32]::SetProcessDPIAware()
+          # Enable per-monitor DPI awareness for accurate capture
+          Add-Type @"
+            using System.Runtime.InteropServices;
+            public class DPI {
+              [DllImport("shcore.dll")]
+              public static extern int SetProcessDpiAwareness(int value);
+            }
+"@
+          [DPI]::SetProcessDpiAwareness(2)
+          [Win32]::SetProcessDPIAware() # Fallback
           
           # Find all windows and match by title or process name
           $allWindows = Get-Process | Where-Object {$_.MainWindowTitle -ne ""}
@@ -184,6 +227,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         psScript = `
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
+          # Enable per-monitor DPI awareness
+          Add-Type @"
+            using System.Runtime.InteropServices;
+            public class DPI {
+              [DllImport("shcore.dll")]
+              public static extern int SetProcessDpiAwareness(int value);
+            }
+"@
+          [DPI]::SetProcessDpiAwareness(2)
+          
           $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
           $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
           $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -199,17 +252,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
           
+          # Enable DPI awareness - MUST be per-monitor for multi-monitor setups with scaling
+          Add-Type @"
+            using System;
+            using System.Runtime.InteropServices;
+            public class DPIAware {
+              [DllImport("user32.dll")]
+              public static extern bool SetProcessDPIAware();
+              
+              [DllImport("shcore.dll")]
+              public static extern int SetProcessDpiAwareness(int value);
+            }
+"@
+          # Always use per-monitor DPI awareness (2) for accurate capture
+          [DPIAware]::SetProcessDpiAwareness(2)
+          
           $screens = [System.Windows.Forms.Screen]::AllScreens
           $targetScreen = $null
+          
+          # Sort by X position ascending (left to right) to match Windows display numbering
+          $sortedScreens = $screens | Sort-Object { $_.Bounds.X }
+          
+          # Debug: List all monitors
+          Write-Host "Available monitors:"
+          for ($i = 0; $i -lt $sortedScreens.Count; $i++) {
+            $screen = $sortedScreens[$i]
+            Write-Host "  Monitor $($i + 1): $($screen.DeviceName) - Bounds: X=$($screen.Bounds.X), Y=$($screen.Bounds.Y), Width=$($screen.Bounds.Width), Height=$($screen.Bounds.Height) - Primary: $($screen.Primary)"
+          }
           
           if ('${monitor}' -eq 'primary') {
             $targetScreen = [System.Windows.Forms.Screen]::PrimaryScreen
           } elseif ('${monitor}' -match '^\\d+$') {
             $index = [int]'${monitor}' - 1
-            if ($index -ge 0 -and $index -lt $screens.Count) {
-              $targetScreen = $screens[$index]
+            if ($index -ge 0 -and $index -lt $sortedScreens.Count) {
+              $targetScreen = $sortedScreens[$index]
             } else {
-              throw "Monitor ${monitor} not found. Available monitors: 1 to $($screens.Count)"
+              throw "Monitor ${monitor} not found. Available monitors: 1 to $($sortedScreens.Count)"
             }
           }
           
@@ -218,8 +296,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
           
           $bounds = $targetScreen.Bounds
-          $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+          Write-Host "Capturing monitor ${monitor} - Bounds: X=$($bounds.X), Y=$($bounds.Y), Width=$($bounds.Width), Height=$($bounds.Height)"
+          
+          $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
           $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+          # Use explicit coordinates for accurate capture
           $graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bitmap.Size)
           
           $bitmap.Save('${windowsPath.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Png)
@@ -256,13 +337,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       
       // Verify file was created
+      const outputPath = path.join(screenshotsDir, filename);
       await fs.access(outputPath);
+      
+      // Generate appropriate success message based on folder used
+      let successPath;
+      if (customFolder) {
+        // Show the custom folder path as provided by the user
+        successPath = path.join(customFolder, filename).replace(/\\/g, '/');
+      } else {
+        // Show relative path for default screenshots folder
+        successPath = `screenshots/${filename}`;
+      }
       
       return {
         content: [
           {
             type: 'text',
-            text: `Screenshot saved successfully to: screenshots/${filename}`
+            text: `Screenshot saved successfully to: ${successPath}`
           }
         ]
       };
