@@ -6,9 +6,11 @@ A Model Context Protocol (MCP) server that enables AI assistants running in WSL 
 
 - 📸 **Full Desktop Capture** - Capture all monitors (default behavior)
 - 🖥️ **Monitor Selection** - Capture specific monitors (primary, 1, 2, etc.)
-- 🪟 **Window Capture** - Capture specific windows by title match
+- 🪟 **Window Capture** - Capture specific windows by title match with DPI awareness
 - 🔄 **Automatic Path Conversion** - Converts WSL paths to Windows paths
 - 📁 **Organized Storage** - Screenshots saved to `workspace/screenshots/`
+- 🎯 **DPI Aware** - Proper scaling for high-DPI displays
+- 🖼️ **Full Window Capture** - Includes window shadows and borders without clipping
 
 ## Prerequisites
 
@@ -103,6 +105,12 @@ The MCP server provides a single tool:
 - **Communication**: Executes PowerShell commands from WSL
 - **Encoding**: Base64 encoding for reliable command execution
 
+### Window Capture Features
+- **DPI Awareness**: Automatically handles high-DPI displays for crisp captures
+- **Window Padding**: Adds 10px padding to capture window shadows and borders
+- **Render Wait**: Waits 200ms after focusing window to ensure complete rendering
+- **Bounds Checking**: Prevents negative coordinates when windows are near screen edges
+
 ### How It Works
 1. MCP server receives screenshot request from Claude
 2. Constructs appropriate PowerShell script based on parameters
@@ -133,8 +141,23 @@ Get-ExecutionPolicy
 - The title match is case-insensitive and supports partial matches
 - Try using a more specific window title
 
+### Window capture is clipped
+The latest version includes automatic padding and DPI awareness. If you still experience clipping:
+- Ensure you're using the latest version
+- Try maximizing the window before capture
+- Check if the window has unusual rendering (some apps use custom chrome)
+
 ### Path conversion issues
 The server automatically converts WSL paths like `/mnt/c/...` to Windows paths like `C:\...`. Ensure your workspace is under a mounted Windows drive.
+
+## Recent Updates
+
+### v1.0.1
+- Fixed window capture clipping issues
+- Added DPI awareness for high-DPI displays
+- Added padding to capture window shadows
+- Improved window rendering wait time
+- Added bounds checking for edge cases
 
 ## Contributing
 
