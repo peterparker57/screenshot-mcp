@@ -13,7 +13,7 @@ const execAsync = promisify(exec);
 const server = new Server(
   {
     name: 'screenshot-server',
-    version: '1.0.0',
+    version: '1.1.0',
   },
   {
     capabilities: {
@@ -46,6 +46,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             windowTitle: {
               type: 'string',
               description: 'Capture a specific window by its title (partial match supported)'
+            },
+            processName: {
+              type: 'string',
+              description: 'Capture a specific window by process name (e.g., "notepad.exe" or just "notepad")'
             }
           }
         }
@@ -59,6 +63,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const filename = request.params.arguments?.filename || 'screenshot.png';
     const monitor = request.params.arguments?.monitor || 'all';
     const windowTitle = request.params.arguments?.windowTitle;
+    const processName = request.params.arguments?.processName;
     
     // Create screenshots folder in current workspace
     const screenshotsDir = path.resolve(process.cwd(), 'screenshots');
@@ -76,8 +81,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
       let psScript;
       
-      if (windowTitle) {
-        // Capture specific window by title
+      if (windowTitle || processName) {
+        // Capture specific window by title or process name
         psScript = `
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
@@ -117,10 +122,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           # Enable DPI awareness
           [Win32]::SetProcessDPIAware()
           
-          # Find all windows and match by title
-          $windows = Get-Process | Where-Object {$_.MainWindowTitle -ne ""} | Where-Object {$_.MainWindowTitle -like "*${windowTitle}*"}
-          if ($windows.Count -eq 0) {
-            throw "No window found with title containing: ${windowTitle}"
+          # Find all windows and match by title or process name
+          $allWindows = Get-Process | Where-Object {$_.MainWindowTitle -ne ""}
+          Write-Host "Available windows:"
+          $allWindows | ForEach-Object { Write-Host "  - $($_.MainWindowTitle) (Process: $($_.ProcessName))" }
+          
+          # Search by title or process name
+          if ("${windowTitle}" -ne "") {
+            $windows = $allWindows | Where-Object {$_.MainWindowTitle -like "*${windowTitle}*"}
+            if ($windows.Count -eq 0) {
+              Write-Host "Search term: '${windowTitle}'"
+              throw "No window found with title containing: ${windowTitle}"
+            }
+          } elseif ("${processName}" -ne "") {
+            # Strip .exe if provided
+            $searchProcess = "${processName}".Replace(".exe", "")
+            $windows = $allWindows | Where-Object {$_.ProcessName -like "*$searchProcess*"}
+            if ($windows.Count -eq 0) {
+              Write-Host "Search process: '${processName}'"
+              throw "No window found for process: ${processName}"
+            }
           }
           
           $window = $windows[0]
@@ -152,7 +173,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           $bitmap.Save('${windowsPath.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Png)
           $graphics.Dispose()
           $bitmap.Dispose()
-          Write-Host "Screenshot of window '${windowTitle}' saved successfully"
+          if ("${windowTitle}" -ne "") {
+            Write-Host "Screenshot of window '${windowTitle}' saved successfully"
+          } else {
+            Write-Host "Screenshot of process '${processName}' saved successfully"
+          }
         `;
       } else if (monitor === 'all') {
         // Current behavior - capture all screens
@@ -214,11 +239,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       
       // PowerShell often outputs CLIXML format to stderr even on success
       // Only throw if there's a real error (not CLIXML or success messages)
-      if (stderr && 
-          !stderr.includes('WARNING') && 
-          !stderr.includes('CLIXML') && 
-          !stderr.includes('Screenshot saved successfully') &&
-          !stderr.includes('Preparing modules')) {
+      // Check if the stderr contains actual error messages
+      const hasRealError = stderr && (
+          stderr.includes('throw') ||
+          stderr.includes('Exception') ||
+          stderr.includes('not found') ||
+          (stderr.includes('Error') && !stderr.includes('ErrorId'))
+      );
+          
+      if (hasRealError) {
+        // Try to extract available windows from stdout if it's a window not found error
+        if (stderr.includes('No window found') && stdout) {
+          console.error('Available windows from stdout:', stdout);
+        }
         throw new Error(stderr);
       }
       
