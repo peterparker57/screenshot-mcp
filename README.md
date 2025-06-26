@@ -8,8 +8,9 @@ A Model Context Protocol (MCP) server that enables AI assistants running in WSL 
 - 🖥️ **Monitor Selection** - Capture specific monitors (primary, 1, 2, etc.)
 - 🪟 **Window Capture** - Capture specific windows by title match with DPI awareness
 - 🚀 **Process Capture** - Capture windows by process name (e.g., notepad.exe)
+- 📂 **Custom Save Locations** - Save to any folder using WSL or Windows paths
 - 🔄 **Automatic Path Conversion** - Converts WSL paths to Windows paths
-- 📁 **Organized Storage** - Screenshots saved to `workspace/screenshots/`
+- 📁 **Organized Storage** - Screenshots saved to `workspace/screenshots/` by default
 - 🎯 **DPI Aware** - Proper scaling for high-DPI displays
 - 🖼️ **Full Window Capture** - Includes window shadows and borders without clipping
 
@@ -87,6 +88,13 @@ Take a screenshot of process "Code"
 Take a screenshot and save it as "test.png"
 ```
 
+### Save to Custom Folder
+```
+Take a screenshot and save it to /mnt/c/Users/username/Pictures/
+Take a screenshot and save to C:\Users\username\Desktop\
+Take a screenshot of monitor 1 and save to folder "../docs/images"
+```
+
 ## API Reference
 
 The MCP server provides a single tool:
@@ -101,12 +109,20 @@ The MCP server provides a single tool:
   - `1`, `2`, etc. - Capture specific monitor by index
 - `windowTitle` (optional): Capture a specific window by its title (partial match supported)
 - `processName` (optional): Capture a specific window by process name (e.g., "notepad.exe" or "notepad")
+- `folder` (optional): Custom folder path to save the screenshot
+  - Supports WSL paths: `/mnt/c/Users/...`
+  - Supports Windows paths: `C:\Users\...`
+  - Supports relative paths: `../images`
+  - Default: `workspace/screenshots/`
 
 **Returns:**
 - Success message with the file path
 - Error message if capture fails
 
-**Note:** If both `windowTitle` and `processName` are provided, `windowTitle` takes precedence.
+**Notes:** 
+- If both `windowTitle` and `processName` are provided, `windowTitle` takes precedence
+- Custom folders are created automatically if they don't exist
+- Path formats are automatically converted between WSL and Windows as needed
 
 ## Technical Details
 
@@ -125,23 +141,26 @@ The MCP server provides a single tool:
 
 ### How It Works
 1. MCP server receives screenshot request from Claude
-2. Constructs appropriate PowerShell script based on parameters
-3. Encodes script in base64 to avoid escaping issues
-4. Executes PowerShell command from WSL
-5. PowerShell captures screenshot using Windows Forms APIs
-6. Image is saved to the workspace's screenshots folder
+2. Determines save location (custom folder or default)
+3. Converts paths between WSL and Windows formats as needed
+4. Constructs appropriate PowerShell script based on parameters
+5. Encodes script in base64 to avoid escaping issues
+6. Executes PowerShell command from WSL
+7. PowerShell captures screenshot using Windows Forms APIs
+8. Image is saved to the specified location
 
 ### Error Handling
 - Filters PowerShell CLIXML output (verbose logging, not errors)
 - Validates monitor indices
 - Provides clear error messages for missing windows or processes
 - Lists available windows when capture fails
-- Automatically creates screenshots directory if needed
+- Automatically creates directories if needed
+- Handles both WSL and Windows path formats
 
 ## Troubleshooting
 
 ### Screenshots folder not created
-The server automatically creates a `screenshots` folder in your current workspace. Ensure you have write permissions.
+The server automatically creates folders as needed. Ensure you have write permissions to the target location.
 
 ### PowerShell execution errors
 Check your PowerShell execution policy:
@@ -162,9 +181,19 @@ The latest version includes automatic padding and DPI awareness. If you still ex
 - Check if the window has unusual rendering (some apps use custom chrome)
 
 ### Path conversion issues
-The server automatically converts WSL paths like `/mnt/c/...` to Windows paths like `C:\...`. Ensure your workspace is under a mounted Windows drive.
+The server automatically converts between WSL and Windows path formats:
+- WSL paths like `/mnt/c/...` are converted to `C:\...` for PowerShell
+- Windows paths like `C:\...` are converted to `/mnt/c/...` for file verification
+- Ensure your paths are accessible from both WSL and Windows
 
 ## Recent Updates
+
+### v1.2.0
+- Added custom folder support with the `folder` parameter
+- Supports both WSL paths (`/mnt/...`) and Windows paths (`C:\...`)
+- Automatic path conversion between WSL and Windows formats
+- Creates custom directories automatically if they don't exist
+- Maintains backward compatibility with default screenshots folder
 
 ### v1.1.0
 - Added process name capture support
