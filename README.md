@@ -1,3 +1,5 @@
+# This repo is in Read Only mode and has been replaced
+# Use the WSLSnapIt-MCP repo instead (works better, more features!)
 # Screenshot MCP Server
 
 A Model Context Protocol (MCP) server that enables AI assistants running in WSL to capture Windows screenshots with advanced features like monitor selection and window-specific capture.
